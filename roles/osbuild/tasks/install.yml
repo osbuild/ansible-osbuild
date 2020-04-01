@@ -158,6 +158,7 @@
   loop:
     - cockpit.socket
     - osbuild-composer.socket
+    - osbuild-rcm.socket
   when:
     - '"osbuild" in packages_installed.stdout_lines'
 
@@ -192,8 +193,9 @@
 - name: Enable services
   service:
     name: "{{ item }}"
-    state: restarted
+    state: started
     enabled: yes
   loop:
     - cockpit.socket
+    - osbuild-rcm.socket
     - osbuild-composer.socket
