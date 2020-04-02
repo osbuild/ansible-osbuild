@@ -163,6 +163,15 @@
   when:
     - '"osbuild" in packages_installed.stdout_lines'
 
+- name: Dump systemd units after stopping services
+  command: systemctl list-units --all
+  register: systemd_dump_after_stop
+
+- name: Write systemd dump to disk
+  copy:
+    content: "{{ systemd_dump_after_stop.stdout }}"
+    dest: "{{ playbook_dir }}/systemd_dump_after_stop.log"
+
 - name: Remove the currently installed packages
   package:
     name:
@@ -190,6 +199,15 @@
     warn: no
   loop: "{{ cockpit_packages.stdout_lines }}"
   changed_when: true
+
+- name: Dump systemd units before starting services
+  command: systemctl list-units --all
+  register: systemd_dump_before_start
+
+- name: Write systemd dump to disk
+  copy:
+    content: "{{ systemd_dump_before_start.stdout }}"
+    dest: "{{ playbook_dir }}/systemd_dump_before_start.log"
 
 - name: Enable services
   systemd:
