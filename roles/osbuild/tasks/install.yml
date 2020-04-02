@@ -151,7 +151,7 @@
   changed_when: false
 
 - name: Disable services before removing old packages
-  service:
+  systemd:
     name: "{{ item }}"
     state: stopped
     enabled: no
@@ -159,6 +159,7 @@
     - cockpit.socket
     - osbuild-composer.socket
     - osbuild-rcm.socket
+    - osbuild-composer.service
   when:
     - '"osbuild" in packages_installed.stdout_lines'
 
@@ -191,7 +192,7 @@
   changed_when: true
 
 - name: Enable services
-  service:
+  systemd:
     name: "{{ item }}"
     state: started
     enabled: yes
@@ -199,3 +200,6 @@
     - osbuild-rcm.socket
     - osbuild-composer.socket
     - cockpit.socket
+  register: service_start
+  until: service_start is success
+  retries: 4
