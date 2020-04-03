@@ -1,6 +1,8 @@
 #!/bin/bash
 set -euxo pipefail
 
+exit 1
+
 # Set an output path for the junit file.
 export JUNIT_OUTPUT_DIR=junit/
 
