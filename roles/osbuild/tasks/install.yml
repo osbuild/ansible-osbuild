@@ -88,6 +88,7 @@
     clone: yes
     update: yes
     track_submodules: no
+  when: install_cockpit_composer_from_git
 
 - name: Install build dependencies
   command: |
@@ -108,12 +109,16 @@
   loop:
     - project: osbuild
       dir: /opt/osbuild
+      enabled: yes
     - project: osbuild-composer
       dir: /opt/osbuild-composer
+      enabled: yes
     - project: cockpit-composer
       dir: /opt/cockpit-composer
+      enabled: "{{ install_cockpit_composer_from_git }}"
   loop_control:
     label: "{{ item.project }}"
+  when: item.enabled
   register: rpm_build
   async: 300
   poll: 0
@@ -125,6 +130,7 @@
   loop: "{{ rpm_build.results }}"
   loop_control:
     loop_var: "async_result_item"
+  when: async_result_item.item.enabled
   register: async_poll_results
   until: async_poll_results.finished
   retries: 60
@@ -144,6 +150,7 @@
   command: "find /opt/cockpit-composer/ -name '*.rpm'"
   register: cockpit_packages
   changed_when: false
+  when: install_cockpit_composer_from_git
 
 - name: Gather a list of currently installed packages
   package_facts:
@@ -168,7 +175,6 @@
 - name: Remove the currently installed packages
   package:
     name:
-      - cockpit-composer
       - "osbuild-composer*"
       - "osbuild*"
       - "python3-osbuild"
@@ -177,11 +183,11 @@
 
 - name: List packages to be installed
   debug:
-    msg: "{{ composer_packages.stdout_lines + osbuild_packages.stdout_lines + cockpit_packages.stdout_lines }}"
+    msg: "{{ composer_packages.stdout_lines + osbuild_packages.stdout_lines + (cockpit_packages.stdout_lines | default([])) }}"
 
 - name: Install RPMs
   package:
-    name: "{{ composer_packages.stdout_lines + osbuild_packages.stdout_lines + cockpit_packages.stdout_lines }}"
+    name: "{{ composer_packages.stdout_lines + osbuild_packages.stdout_lines + (cockpit_packages.stdout_lines | default([])) }}"
     state: latest
   changed_when: true
 
@@ -191,6 +197,7 @@
     warn: no
   loop: "{{ cockpit_packages.stdout_lines }}"
   changed_when: true
+  when: install_cockpit_composer_from_git
 
 - name: Enable services
   service:

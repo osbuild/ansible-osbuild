@@ -15,6 +15,9 @@
 # Update all software packages before building and installing.
 update_all_packages: no
 
+# Install cockpit-composer from git.
+install_cockpit_composer_from_git: no
+
 # Set to yes to run integration tests immediately after deployment (takes time).
 run_integration_tests: no
 
