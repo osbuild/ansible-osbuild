@@ -1,5 +1,5 @@
 # These variables override default values for variables in the roles.
-
+# TESTING JENKINS
 ## Uncomment and change the following variables to clone from a different
 ## repository (example: a GitHub fork), refspec, or version (SHA).
 # osbuild_composer_repo: https://github.com/osbuild/osbuild-composer
