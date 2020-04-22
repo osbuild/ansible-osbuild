@@ -208,3 +208,85 @@
     - osbuild-rcm.socket
     - osbuild-composer.socket
     - cockpit.socket
+
+- name: Clone osbuild-installer-frontend from github
+  git:
+    repo: "{{ osbuild_installer_frontend_repo }}"
+    dest: /opt/osbuild-installer-frontend
+    version: "{{ osbuild_installer_frontend_version }}"
+    force: yes
+    clone: yes
+    update: yes
+    track_submodules: no
+
+- name: Clone osbuild-installer-backend from github
+  git:
+    repo: "{{ osbuild_installer_backend_repo }}"
+    dest: /opt/osbuild-installer-backend
+    version: "{{ osbuild_installer_backend_version }}"
+    force: yes
+    clone: yes
+    update: yes
+    track_submodules: no
+
+- name: Clone insights-proxy
+  git:
+    repo: "https://github.com/RedHatInsights/insights-proxy"
+    dest: /opt/insights-proxy
+    force: yes
+    clone: yes
+    update: yes
+    track_submodules: no
+
+- name: Clone javascript-clients
+  git:
+    repo: "{{ javascript_clients }}"
+    dest: /opt/javascript-clients
+    force: yes
+    clone: yes
+    update: yes
+    track_submodules: no
+
+- name: Start insights-proxy
+  shell: |
+    scripts/patch-etc-hosts.sh
+    scripts/update.sh
+    scripts/run.sh
+  args:
+    chdir: /opt/insights-proxy
+  environment:
+    RUNNER: "podman"
+    SPANDX_CONFIG: "/opt/osbuild-installer-frontend/profiles/local-frontend-and-api-with-identity.js"
+    MYOPTS: "-d"
+
+- name: Build and start osbuild-installer-backend
+  shell: |
+    make build
+    nohup ./installer &
+  args:
+    chdir: /opt/osbuild-installer-backend
+
+- name: Prepare javascript client generation
+  shell: |
+    npm install
+  args:
+    chdir: /opt/javascript-clients
+
+- name: Generate javascript osbuild client
+  shell: |
+    npm install
+    npm run generate
+    npm run build
+    npm link
+  args:
+    chdir: /opt/javascript-clients/packages/osbuild-installer
+  environment:
+    SPEC: "https://prod.foo.redhat.com:1337/api/osbuild-installer/v1/openapi.json"
+
+- name: Build and start osbuild-installer-frontend
+  shell: |
+    npm install
+    npm link @redhat-cloud-services/osbuild-installer
+    nohup npm start &
+  args:
+    chdir: /opt/osbuild-installer-frontend

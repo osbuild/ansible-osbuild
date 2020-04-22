@@ -6,7 +6,7 @@
   tasks:
 
     - name: Ensure python requirements are installed
-      raw: dnf -y install python3 python3-dnf
+      raw: dnf -y install python3 python3-dnf python2 npm node podman
       register: python_reqs
       changed_when: "'Nothing to do' not in python_reqs.stdout"
 

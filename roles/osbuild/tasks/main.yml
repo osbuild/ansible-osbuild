@@ -11,6 +11,11 @@
     cockpit_composer_repo: "{{ cockpit_composer_repo | default('https://github.com/osbuild/cockpit-composer') }}"
     cockpit_composer_version: "{{ cockpit_composer_version | default('master') }}"
     cockpit_composer_ref: "{{ cockpit_composer_ref | default('+refs/pull/*:refs/heads/*') }}"
+    osbuild_installer_frontend_repo: "{{ osbuild_installer_frontend_repo | default('https://github.com/osbuild/osbuild-installer-frontend') }}"
+    osbuild_installer_frontend_version: "{{ osbuild_installer_frontend_version | default('master') }}"
+    osbuild_installer_backend_repo: "{{ osbuild_installer_backend_repo | default('https://github.com/gundersanne/osbuild-installer-backend') }}"
+    osbuild_installer_backend_version: "{{ osbuild_installer_backend_version | default('buildimage-endpoint') }}"
+    javascript_clients: "{{ javsacript_clients | default('https://github.com/gundersanne/javascript-clients') }}"
 
 - name: Dump what we will be doing
   debug:
