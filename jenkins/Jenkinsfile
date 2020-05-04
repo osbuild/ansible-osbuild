@@ -7,24 +7,29 @@ pipeline {
     }
 
     stages {
-        stage("🛫 Deploy") {
-            matrix {
-                axes {
-                    axis {
-                        name 'DISTRO'
-                        values 'fedora31', 'fedora32', 'rhel82', 'rhel83'
-                    }
+        stage("Functional tests") {
+            parallel {
+
+                stage('Fedora 31') {
+                    agent { label "fedora31" }
+                    steps { sh "jenkins/run_tests.sh" }
                 }
-                stages {
-                    stage('Ansible') {
-                        agent {
-                            label "${DISTRO}"
-                        }
-                        steps {
-                            sh script: "jenkins/run_tests.sh", label: "Deploy on ${DISTRO}"
-                        }
-                    }
+
+                stage('Fedora 32') {
+                    agent { label "fedora32" }
+                    steps { sh "jenkins/run_tests.sh" }
                 }
+
+                stage('RHEL 8.2') {
+                    agent { label "rhel82" }
+                    steps { sh "jenkins/run_tests.sh" }
+                }
+
+                stage('RHEL 8.3') {
+                    agent { label "rhel83" }
+                    steps { sh "jenkins/run_tests.sh" }
+                }
+
             }
         }
     }
