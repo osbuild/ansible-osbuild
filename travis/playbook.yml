@@ -1,0 +1,136 @@
+---
+
+- hosts: localhost
+  vars:
+    mirrors:
+      fedora:
+        - http://download.fedoraproject.org/pub/fedora/linux/releases/{{ testing_os_version }}/Cloud/x86_64/images
+    qcow:
+      fedora:
+        "31": Fedora-Cloud-Base-31-1.9.x86_64.qcow2
+        "32": Fedora-Cloud-Base-32-1.6.x86_64.qcow2
+  tasks:
+
+    - name: Dump the testing OS + version
+      debug:
+        msg: |
+          testing_os: {{ testing_os }}
+          testing_os_version: {{ testing_os_version }}
+
+    - name: Set the mirror and qcow file for downloading
+      set_fact:
+        download_mirror: "{{ mirrors[testing_os] | shuffle | first }}"
+        qcow_file: "{{ qcow[testing_os][testing_os_version] }}"
+
+    - name: Download Fedora QCOW image in the background
+      get_url:
+        url: "{{ download_mirror }}/{{ qcow_file }}"
+        dest: "/tmp/{{ qcow_file }}"
+      async: 300
+      poll: 0
+      register: qcow_download
+
+    - name: Add user to kvm group
+      user:
+        name: "{{ ansible_user_id }}"
+        groups: kvm
+        append: yes
+      become: yes
+
+    - name: Reset ssh connection to add group
+      meta: reset_connection
+
+    - name: Run kvm-ok to verify KVM support
+      command: kvm-ok
+      become: yes
+
+    - name: Start libvirtd
+      systemd:
+        name: libvirtd
+        state: started
+        enabled: yes
+      become: yes
+
+    - name: Verify that virsh works
+      command: virsh list --all
+
+    - name: Write cloud-init user-data
+      copy:
+        dest: /tmp/user-data
+        content: |
+          #cloud-config
+          ssh_authorized_keys:
+            - {{ lookup('file', '/tmp/sshkey.pub') }}
+
+    - name: Write cloud-init meta-data
+      copy:
+        dest: /tmp/meta-data
+        content: |
+          instance-id: testing
+
+    - name: Create cloud-init ISO
+      command: genisoimage -o /tmp/cloud-init.iso -V cidata -r -J user-data meta-data
+      args:
+        chdir: /tmp
+
+    - name: Wait for the QCOW download to finish
+      async_status:
+        jid: "{{ qcow_download.ansible_job_id }}"
+      register: job_result
+      until: job_result.finished
+      retries: 30
+
+    - name: Run virt-install to import qcow
+      command: |
+        virt-install \
+          --name fedora-test \
+          --memory 4096 \
+          --vcpus 2 \
+          --disk path=/tmp/{{ qcow_file }} \
+          --disk path=/tmp/cloud-init.iso,device=cdrom \
+          --import \
+          --os-variant ubuntu18.04 \
+          --noautoconsole \
+          --network network=default
+      become: yes
+
+    - name: Get address of the new VM (takes time while it boots)
+      command: virsh domifaddr fedora-test
+      become: yes
+      register: vm_address_check
+      until: vm_address_check.stdout | regex_search("[0-9\.]*/24")
+      retries: 60
+      delay: 5
+
+    - name: Get the IP address for the VM we just started
+      set_fact:
+        vm_ip: "{{ vm_address_check.stdout | regex_findall(\"([0-9\\.]*)/24\") | first }}"
+
+    - name: Wait for the ssh daemon to start
+      wait_for:
+        host: "{{ vm_ip }}"
+        port: 22
+        timeout: 300
+
+    - name: Add a dynamic host for the VM we made
+      add_host:
+        name: test_vm
+        group: test_instances
+        ansible_host: "{{ vm_ip }}"
+        ansible_user: fedora
+        ansible_password: secrete
+        ansible_ssh_pipelining: yes
+
+    - name: Write dynamic host file to disk
+      copy:
+        dest: /tmp/hosts.ini
+        content: |
+          [test_instances]
+          test_vm ansible_host={{ vm_ip }} ansible_user=fedora ansible_password=secrete ansible_ssh_pipelining=True
+
+- hosts: test_instances
+  tasks:
+
+    - name: Verify we're in the Fedora VM
+      debug:
+        var: ansible_distribution

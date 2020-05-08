@@ -1,0 +1,38 @@
+os: linux
+dist: bionic
+
+language: python
+cache: pip
+python:
+  - "3.7"
+
+env:
+  global:
+    - PYTHONUNBUFFERED=1
+    - DEBIAN_FRONTEND=noninteractive
+    - ANSIBLE_CONFIG=ansible.cfg
+    - ANSIBLE_PRIVATE_KEY_FILE=/tmp/sshkey
+  matrix:
+    - TESTING_OS=fedora TESTING_OS_VERSION=31
+    - TESTING_OS=fedora TESTING_OS_VERSION=32
+
+addons:
+  apt:
+    packages:
+      - bridge-utils
+      - cpu-checker
+      - kmod
+      - libvirt-clients
+      - libvirt-daemon
+      - libvirt-daemon-system
+      - openssh-server
+      - qemu-kvm
+      - sshpass
+      - virtinst
+      - wget
+    update: false
+
+install: ./travis/install.sh
+
+script: ./travis/run_tests.sh
+
