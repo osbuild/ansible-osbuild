@@ -11,38 +11,28 @@ pipeline {
         stage("Test") {
             parallel {
 
-                stage('Fedora 31 (mock)') {
+                stage('Fedora 31') {
                     agent { label "fedora31" }
-                    steps {
-                        run_tests()
-                    }
-                    post {
-                        always {
-                            preserve_logs('fedora31-mock')
-                        }
-                    }
-                }
+                    stages {
 
-                stage('Fedora 32 (mock)') {
-                    agent { label "fedora32" }
-                    steps {
-                        run_tests()
-                    }
-                    post {
-                        always {
-                            preserve_logs('fedora32-mock')
+                        stage('Build') {
+                            steps {
+                                sh "ansible-playbook -i localhost, -e ansible_connection=local tools/mock_build.yml"
+                            }
                         }
-                    }
-                }
 
-                stage('RHEL 8.2 (mock)') {
-                    agent { label "rhel82" }
-                    steps {
-                        run_tests()
-                    }
-                    post {
-                        always {
-                            preserve_logs('rhel82-mock')
+                        stage('Deploy') {
+                            environment {
+                                EXTRA_VARS = "-e install_source=os"
+                            }
+                            steps {
+                                run_tests()
+                            }
+                            post {
+                                always {
+                                    preserve_logs('fedora31-mock')
+                                }
+                            }
                         }
                     }
                 }
@@ -58,6 +48,18 @@ pipeline {
                     post {
                         always {
                             preserve_logs('fedora32-os')
+                        }
+                    }
+                }
+
+                stage('RHEL 8.2 (mock)') {
+                    agent { label "rhel82" }
+                    steps {
+                        run_tests()
+                    }
+                    post {
+                        always {
+                            preserve_logs('rhel82-mock')
                         }
                     }
                 }

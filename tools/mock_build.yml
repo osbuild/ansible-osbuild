@@ -1,0 +1,179 @@
+---
+# This playbook compiles osbuild and osbuild-composer in a mock chroot and
+# installs a dnf repository on the machine to use for installation.
+
+- hosts: localhost
+  vars:
+    # Default locations for getting the source code.
+    osbuild_repo_url: https://github.com/osbuild/osbuild.git
+    osbuild_version: master
+    osbuild_composer_repo_url: https://github.com/osbuild/osbuild-composer.git
+    osbuild_composer_version: master
+    # Set mock-related variables.
+    mock_config_id: "{{ (ansible_distribution == 'RedHat') | ternary('rhel', 'fedora') }}"
+    mock_config_version: "{{ ansible_distribution_major_version }}"
+    mock_config_arch: "{{ ansible_architecture }}"
+    short_version: "{{ ansible_distribution_version | replace('.', '') }}"
+    # Temporary location for cloning git repositories.
+    git_repos_dir: "/tmp/git_repos"
+    # Set the workspace (where logs are copied).
+    workspace: "{{ lookup('env', 'WORKSPACE') | default(playbook_dir) }}"
+
+  tasks:
+
+    - name: Set variables
+      set_fact:
+        mock_config: "{{ mock_config_id }}-{{ mock_config_version }}-{{ mock_config_arch }}"
+        yum_repo_dir: "/tmp/mock_repo/repo/{{ mock_config_id }}{{ short_version }}"
+
+    - name: Install packages
+      dnf:
+        name:
+          - createrepo_c
+          - mock
+        state: present
+      become: yes
+
+    - name: Read in the RHEL 8 repository configuration
+      slurp:
+        src: "/etc/yum.repos.d/rhel8.repo"
+      register: rhel_repos
+      when:
+        - ansible_distribution == 'RedHat'
+
+    - name: Replace RHEL 8 mock template
+      copy:
+        dest: /etc/mock/templates/rhel-8.tpl
+        content: |
+          config_opts['chroot_setup_cmd'] = 'install tar gcc-c++ redhat-rpm-config redhat-release which xz sed make bzip2 gzip gcc coreutils unzip shadow-utils diffutils cpio bash gawk rpm-build info patch util-linux findutils grep'
+          config_opts['dist'] = 'el8'  # only useful for --resultdir variable subst
+          config_opts['releasever'] = '8'
+          config_opts['package_manager'] = 'dnf'
+          config_opts['bootstrap_image'] = 'ubi8/ubi'
+          config_opts['root'] = 'rhel-8-{{ ansible_architecture }}'
+
+          config_opts['dnf.conf'] = """
+          [main]
+          keepcache=1
+          debuglevel=2
+          reposdir=/dev/null
+          logfile=/var/log/yum.log
+          retries=20
+          obsoletes=1
+          gpgcheck=1
+          assumeyes=1
+          syslog_ident=mock
+          syslog_device=
+          install_weak_deps=0
+          metadata_expire=0
+          best=1
+          module_platform_id=platform:el8
+          protected_packages=
+
+          {{ rhel_repos['content'] | b64decode }}
+
+          """
+      become: yes
+      when:
+        - ansible_distribution == 'RedHat'
+
+    - name: Enable fastestmirror for Fedora mock template
+      lineinfile:
+        path: /etc/mock/templates/fedora-branched.tpl
+        line: "fastestmirror=1"
+        insertbefore: "^install_weak_deps"
+      become: yes
+      when:
+        - ansible_distribution == "Fedora"
+
+    - name: Create directory for git repos
+      file:
+        path: "{{ git_repos_dir }}"
+        state: directory
+
+    - name: Clone each repository
+      git:
+        repo: "{{ item.repo_url }}"
+        dest: "{{ git_repos_dir }}/{{ item.repo_name }}"
+        version: "{{ item.version }}"
+        refspec: "+refs/pull/*:refs/remotes/origin/pr/*"
+      loop:
+        - repo_name: osbuild
+          repo_url: "{{ osbuild_repo_url }}"
+          version: "{{ osbuild_version }}"
+        - repo_name: osbuild-composer
+          repo_url: "{{ osbuild_composer_repo_url }}"
+          version: "{{ osbuild_composer_version }}"
+
+    - name: Build source RPMs
+      command: "make -C {{ git_repos_dir }}/{{ item }} srpm"
+      loop:
+        - osbuild
+        - osbuild-composer
+
+    - name: Find the source RPMs we built
+      find:
+        paths: "{{ git_repos_dir }}"
+        patterns: "*.src.rpm"
+        recurse: yes
+      register: source_rpms
+
+    - name: Initialize the mock chroot
+      command: "mock -r {{ mock_config }} --no-bootstrap-chroot --init"
+      become: yes
+
+    - name: Create a directory to hold the RPMs we build
+      file:
+        path: "{{ yum_repo_dir }}"
+        state: directory
+
+    - block:
+
+        - name: Build the source RPMs in the mock
+          command: |
+            mock -r {{ mock_config }} --no-bootstrap-chroot \
+              --resultdir {{ yum_repo_dir }}/ --with=tests \
+              {{ source_rpms.files | map(attribute='path') | list | join(' ') }}
+          become: yes
+          register: mock_output
+
+      always:
+
+        - name: Write mock output to log file
+          copy:
+            dest: "{{ workspace }}/mock-output.log"
+            content: |
+              mock stderr:
+              {{ mock_output.stderr }}
+
+              mock stdout:
+              {{ mock_output.stdout }}
+
+        - name: Find the mock logs
+          find:
+            paths: "{{ yum_repo_dir }}"
+            patterns: "*.log"
+            recurse: yes
+          register: mock_logs
+
+        - name: Copy the mock logs to the workspace directory
+          copy:
+            src: "{{ item }}"
+            dest: "{{ workspace }}/mock_log-{{ item | basename }}"
+            remote_src: yes
+          loop: "{{ mock_logs.files | map(attribute='path') | list }}"
+
+    - name: Create a repo from the RPMs
+      command: "createrepo_c {{ yum_repo_dir }}"
+
+    - name: Set up a yum repository configuration
+      copy:
+        dest: /etc/yum.repos.d/osbuild.repo
+        content: |
+          [osbuild-repo]
+          name=osbuild rpms from mock chroot
+          baseurl=file://{{ yum_repo_dir }}
+          enabled=1
+          gpgcheck=0
+          priority=5
+      become: yes
