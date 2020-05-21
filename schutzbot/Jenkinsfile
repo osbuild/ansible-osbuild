@@ -20,7 +20,7 @@ pipeline {
                     }
                     post {
                         always {
-                            preserve_logs('fedora31-mock')
+                            preserve_logs('fedora31')
                         }
                     }
                 }
@@ -35,7 +35,7 @@ pipeline {
                     }
                     post {
                         always {
-                            preserve_logs('fedora32-mock')
+                            preserve_logs('fedora32')
                         }
                     }
                 }
@@ -50,7 +50,22 @@ pipeline {
                     }
                     post {
                         always {
-                            preserve_logs('rhel82-mock')
+                            preserve_logs('rhel82')
+                        }
+                    }
+                }
+
+                stage('RHEL 8.3') {
+                    agent { label "rhel83" }
+                    environment {
+                        EXTRA_VARS = "-e install_source=os"
+                    }
+                    steps {
+                        run_tests()
+                    }
+                    post {
+                        always {
+                            preserve_logs('rhel83')
                         }
                     }
                 }
