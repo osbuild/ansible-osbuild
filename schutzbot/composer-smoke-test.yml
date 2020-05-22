@@ -54,3 +54,7 @@
 
     - name: Download the image we built
       command: "composer-cli compose image {{ compose_uuid }}"
+      register: image_download
+
+    - debug:
+        var: image_download

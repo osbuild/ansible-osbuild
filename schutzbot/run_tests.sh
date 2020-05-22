@@ -7,7 +7,7 @@ source /etc/os-release
 # Set up a dnf repository for a previously built known working package of
 # osbuild and osbuild-composer.
 REPO_BASE_URL=https://rhos-d.infra.prod.upshift.rdu2.redhat.com:13808/v1/AUTH_95e858620fb34bcc9162d9f52367a560/osbuildci-artifacts
-sudo tee /etc/yum.repos.d/osbuild-mock.repo > /dev/null << EOF
+sudo tee /etc/yum.repos.d/osbuild-mock.repo << EOF
 [osbuild-mock]
 name=osbuild mock ${BUILD_TAG} ${ID}${VERSION_ID//./}
 baseurl=${REPO_BASE_URL}/jenkins-osbuild-osbuild-composer-PR-651-26/${ID}${VERSION_ID//./}
@@ -18,7 +18,7 @@ priority=5
 EOF
 
 # Verify that the repository we added is working properly.
-dnf list all | grep osbuild-mock
+dnf list all
 
 # Create temporary directories for Ansible.
 sudo mkdir -vp /opt/ansible_{local,remote}
