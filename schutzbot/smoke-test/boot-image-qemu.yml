@@ -1,0 +1,94 @@
+---
+
+- name: "{{ compose.compose_type }} - Wait for the image to finish building"
+  command: "composer-cli --json compose info {{ compose.id }}"
+  register: info_out
+  until: (info_out.stdout | from_json).queue_status not in ['RUNNING', 'WAITING']
+  retries: 40
+  delay: 15
+
+- name: "{{ compose.compose_type }} - Check the final status of the compose"
+  command: "composer-cli --json compose info {{ compose.id }}"
+  register: info_out
+
+- name: Fail if image build failed
+  fail:
+    var: compose
+  when: (info_out.stdout | from_json).queue_status != "FINISHED"
+
+- name: "{{ compose.compose_type }} - Download the image we built"
+  command: "composer-cli compose image {{ compose.id }}"
+  args:
+    chdir: /tmp
+  register: compose_download
+
+- name: "{{ compose.compose_type }} - Find the image file"
+  find:
+    paths: /tmp
+    patterns: "{{ compose.id }}*"
+  register: image_find
+
+- name: "{{ compose.compose_type }} - Set a fact for the image filename"
+  set_fact:
+    image_filename: "{{ image_find.files[0]['path'] }}"
+
+- name: "{{ compose.compose_type }} - Run virt-install to import image"
+  command: |
+    virt-install \
+      --name composer-test \
+      --memory 1024 \
+      --vcpus 2 \
+      --cpu host \
+      --disk path={{ image_filename }} \
+      --disk path=/tmp/config.iso,device=cdrom \
+      --import \
+      --os-variant rhel8.2 \
+      --noautoconsole \
+      --network network=default
+  become: yes
+
+- name: "{{ compose.compose_type }} - Get address of the new VM (takes time while it boots)"
+  command: virsh domifaddr composer-test
+  become: yes
+  register: vm_address_check
+  until: vm_address_check.stdout | regex_search("[0-9\.]*/24")
+  retries: 60
+  delay: 5
+
+- name: "{{ compose.compose_type }} - Get the IP address for the VM we just started"
+  set_fact:
+    vm_ip: "{{ vm_address_check.stdout | regex_findall(\"([0-9\\.]*)/24\") | first }}"
+
+- name: "{{ compose.compose_type }} - Wait for the ssh daemon to start on {{ vm_ip }}"
+  wait_for:
+    host: "{{ vm_ip }}"
+    port: 22
+    timeout: 300
+    search_regex: OpenSSH
+
+- name: "{{ compose.compose_type }} - Check for /etc/smoke-test.txt"
+  command: "ssh -o StrictHostKeyChecking=no -i /tmp/sshkey redhat@{{ vm_ip }} 'cat /etc/smoke-test.txt'"
+  register: file_check
+  until: file_check is success
+  retries: 10
+
+- name: Mark test as passed if smoke-test file is correct
+  set_fact:
+    passed_tests: "{{ passed_tests + [compose.compose_type] }}"
+  when: file_check.stdout == 'smoke-test'
+
+- name: Mark test as failed if smoke-test file is not correct
+  set_fact:
+    failed_tests: "{{ failed_tests + [compose.compose_type] }}"
+  when: file_check.stdout != 'smoke-test'
+
+- name: "{{ compose.compose_type }} - Remove test VM"
+  command: "{{ item }}"
+  loop:
+    - virsh destroy composer-test
+    - virsh undefine composer-test
+
+- name: "{{ compose.compose_type }} - Remove image file"
+  file:
+    path: "{{ image_filename }}"
+    state: absent

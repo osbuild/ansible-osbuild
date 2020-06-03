@@ -1,0 +1,49 @@
+---
+
+- name: Start libvirtd
+  systemd:
+    name: libvirtd
+    state: started
+    enabled: yes
+
+- name: Create ssh key
+  openssh_keypair:
+    path: /tmp/sshkey
+    comment: composer-test
+  become: no
+
+- name: Write cloud-init user-data
+  copy:
+    dest: /tmp/config.yaml
+    content: |
+      #cloud-config
+
+      users:
+        - name: redhat
+          groups: wheel
+          lock_passwd: false
+          passwd: $6$z2SpEKtNrsPuKVGj$wEXMnaFRjShqSQAvkRa42G5TTjnnoGd18fgMrIP9OHjGHvP7mfA4stSTSZTifaNnDw.WA8MxFkZgKWK282bDQ.
+          shell: /bin/bash
+          sudo: ['ALL=(ALL) NOPASSWD:ALL']
+          ssh_authorized_keys:
+            - {{ lookup('file', '/tmp/sshkey.pub') }}
+
+      write_files:
+        - path: /etc/smoke-test.txt
+          content: c21va2UtdGVzdAo=
+          encoding: b64
+          owner: root:root
+          permissions: "0644"
+
+- name: Download cloud-localds script
+  get_url:
+    url: https://git.launchpad.net/cloud-utils/plain/bin/cloud-localds
+    dest: /usr/local/bin/cloud-localds
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Create cloud-init ISO
+  command: /usr/local/bin/cloud-localds config.iso config.yaml
+  args:
+    chdir: /tmp

@@ -3,6 +3,14 @@
 - name: Run post-deployment smoke tests
   hosts: localhost
   become: yes
+  vars:
+    compose_types:
+      # qcow2: {}
+      ami:
+        image_key: "ansible-osbuild-smoke-test-{{ ansible_hostname | to_uuid }}"
+        upload_profile: /tmp/aws.toml
+    passed_tests: []
+    failed_tests: []
   tasks:
 
     - name: Install packages to boot the image
@@ -31,6 +39,19 @@
       poll: 0
       register: dnf_install
 
+    - name: Write the AWS TOML file
+      copy:
+        dest: /tmp/aws.toml
+        content: |
+          provider = "aws"
+
+          [settings]
+          accessKeyID = "{{ lookup('env', 'AWS_ACCESS_KEY_ID') }}"
+          secretAccessKey = "{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') }}"
+          bucket = "{{ lookup('env', 'AWS_BUCKET') }}"
+          region = "{{ lookup('env', 'AWS_REGION') }}"
+          key = "{{ compose_types.ami.image_key }}"
+
     - name: Deploy custom repositories that use internal mirrors
       copy:
         src: "repositories/{{ item }}"
@@ -43,9 +64,6 @@
       systemd:
         name: osbuild-composer.service
         state: stopped
-
-    - name: Verify that sources are set up
-      command: composer-cli sources list
 
     - name: Write a simple blueprint with only bash inside
       copy:
@@ -64,46 +82,10 @@
     - name: Push the blueprint into osbuild-composer
       command: composer-cli blueprints push /tmp/blueprint.toml
 
-    - name: Get a list of the blueprints loaded
-      command: composer-cli blueprints list
-      register: blueprint_list
-
-    - name: Fail if the blueprint is missing
-      fail:
-        msg: Our blueprint is not loaded.
-      when: "'bash' not in blueprint_list.stdout"
-
-    - name: Depsolve the blueprint
-      command: composer-cli blueprints depsolve bash
-
-    - name: Build the image
-      command: composer-cli --json compose start bash qcow2
+    - name: Start the composes
+      command: composer-cli --json compose start bash {{ item.key }} {{ item.value.image_key | default('') }} {{ item.value.upload_profile | default('') }}
       register: compose_start
-
-    - name: Set a fact for the compose UUID
-      set_fact:
-        compose_uuid: "{{ output_json.build_id }}"
-      vars:
-        output_json: "{{ compose_start.stdout | from_json }}"
-
-    - name: Wait for the image to finish building
-      command: "composer-cli --json compose info {{ compose_uuid }}"
-      register: info_out
-      until: (info_out.stdout | from_json).queue_status not in ['RUNNING', 'WAITING']
-      retries: 40
-      delay: 15
-
-    - name: Check the final status of the compose
-      command: "composer-cli --json compose info {{ compose_uuid }}"
-      register: info_out
-
-    - name: Fail if image build failed
-      fail:
-        var: info_out.stdout | from_json
-      when: (info_out.stdout | from_json).queue_status != "FINISHED"
-
-    - name: Download the image we built
-      command: "composer-cli compose image {{ compose_uuid }}"
+      loop: "{{ compose_types | dict2items }}"
 
     - name: Ensure virtualization packages have finished installing.
       async_status:
@@ -113,93 +95,16 @@
       retries: 120
       delay: 5
 
-    - name: Start libvirtd
-      systemd:
-        name: libvirtd
-        state: started
-        enabled: yes
+      # Prepare a cloud-init ISO.
+    - include_tasks: smoke-test/prepare-cloud-init.yml
 
-    - name: Create ssh key
-      openssh_keypair:
-        path: /tmp/sshkey
-        comment: composer-test
-      become: no
+    - name: Get a list of the composes we started
+      command: composer-cli --json compose status
+      register: compose_list
 
-    - name: Write cloud-init user-data
-      copy:
-        dest: /tmp/config.yaml
-        content: |
-          #cloud-config
-          package_upgrade: false
-          users:
-            - name: redhat
-              groups: wheel
-              lock_passwd: false
-              passwd: $6$z2SpEKtNrsPuKVGj$wEXMnaFRjShqSQAvkRa42G5TTjnnoGd18fgMrIP9OHjGHvP7mfA4stSTSZTifaNnDw.WA8MxFkZgKWK282bDQ.
-              shell: /bin/bash
-              sudo: ['ALL=(ALL) NOPASSWD:ALL']
-              ssh_authorized_keys:
-                - {{ lookup('file', '/tmp/sshkey.pub') }}
+      # Boot each image.
+    - include_tasks: "smoke-test/boot-image-{{ compose.compose_type }}.yml"
+      loop: "{{ compose_list.stdout | from_json }}"
+      loop_control:
+        loop_var: compose
 
-    - name: Download cloud-localds script
-      get_url:
-        url: https://git.launchpad.net/cloud-utils/plain/bin/cloud-localds
-        dest: /usr/local/bin/cloud-localds
-        owner: root
-        group: root
-        mode: '0755'
-
-    - name: Create cloud-init ISO
-      command: /usr/local/bin/cloud-localds config.iso config.yaml
-      args:
-        chdir: /tmp
-
-    - name: Run virt-install to import qcow
-      command: |
-        virt-install \
-          --name composer-test \
-          --memory 1024 \
-          --vcpus 2 \
-          --disk path={{ compose_uuid }}-disk.qcow2 \
-          --disk path=/tmp/config.iso,device=cdrom \
-          --import \
-          --os-variant linux \
-          --noautoconsole \
-          --network network=default
-      become: yes
-
-    - name: Get address of the new VM (takes time while it boots)
-      command: virsh domifaddr composer-test
-      become: yes
-      register: vm_address_check
-      until: vm_address_check.stdout | regex_search("[0-9\.]*/24")
-      retries: 60
-      delay: 5
-
-    - name: Get the IP address for the VM we just started
-      set_fact:
-        vm_ip: "{{ vm_address_check.stdout | regex_findall(\"([0-9\\.]*)/24\") | first }}"
-
-    - name: "Wait for the ssh daemon to start on {{ vm_ip }}"
-      wait_for:
-        host: "{{ vm_ip }}"
-        port: 22
-        timeout: 300
-
-    - name: "Add a dynamic host for the VM on {{ vm_ip }}"
-      add_host:
-        name: test_vm
-        group: booted_instances
-        ansible_host: "{{ vm_ip }}"
-        ansible_user: redhat
-        ansible_ssh_pipelining: yes
-
-- hosts: booted_instances
-  become: yes
-  vars:
-    ansible_private_key_file: /tmp/sshkey
-  tasks:
-
-    - name: Verify we are in the guest
-      debug:
-        var: ansible_default_ipv4
