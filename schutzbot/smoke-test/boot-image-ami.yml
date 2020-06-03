@@ -1,0 +1,114 @@
+---
+
+- name: "ami - Wait for the image build, upload and import ({{ compose_types.ami.image_key }})"
+  command: "composer-cli --json compose info {{ compose.id }}"
+  register: info_out
+  until: (info_out.stdout | from_json).queue_status not in ['RUNNING', 'WAITING']
+  retries: 120
+  delay: 30
+
+- name: "ami - Fail if image build failed"
+  fail:
+    var: compose
+  when: (info_out.stdout | from_json).queue_status != "FINISHED"
+
+- name: "ami - Wait for image to appear ({{ compose_types.ami.image_key }})"
+  ec2_ami_info:
+    aws_access_key: "{{ lookup('env', 'AWS_ACCESS_KEY_ID') }}"
+    aws_secret_key: "{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') }}"
+    region: "{{ lookup('env', 'AWS_REGION') }}"
+    filters:
+      name: "{{ compose_types.ami.image_key }}"
+  register: image_check
+  until:
+    - image_check.images is defined
+    - (image_check.images | length) == 1
+  retries: 10
+  delay: 30
+
+- name: "ami - Dump AMI data"
+  debug:
+    var: image_check.images | first
+
+- name: "ami - Add temporary keypair"
+  ec2_key:
+    aws_access_key: "{{ lookup('env', 'AWS_ACCESS_KEY_ID') }}"
+    aws_secret_key: "{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') }}"
+    region: "{{ lookup('env', 'AWS_REGION') }}"
+    name: "{{ compose_types.ami.image_key }}"
+    key_material: "{{ lookup('file', '/tmp/sshkey.pub') }}"
+    force: yes
+
+- name: "ami - Build instances in EC2 with the imported AMI"
+  command: |
+    aws \
+      --region={{ lookup('env', 'AWS_REGION') }} \
+      ec2 run-instances \
+      --associate-public-ip-address \
+      --image-id {{ image_id }} \
+      --instance-type t3a.micro \
+      --key-name {{ key_name }} \
+      --security-group default \
+      --tag-specifications ResourceType=instance,Tags=[\{Key=Name,Value='{{ instance_name }}'\}] \
+      --user-data "file:///tmp/config.yaml"
+  vars:
+    image_id: "{{ image_check.images[0].image_id }}"
+    instance_name: "{{ compose_types.ami.image_key }}"
+    key_name: "{{ compose_types.ami.image_key }}"
+
+- block:
+
+    - name: Wait for instance to finish building
+      ec2_instance_info:
+        filters:
+          "image-id": "{{ image_check.images[0].image_id }}"
+      register: ec2_build
+      until: ec2_build.instances[0].state.name == 'running'
+      retries: 40
+      delay: 15
+
+    - name: "ami - Wait for ssh to start on new instance"
+      wait_for:
+        host: "{{ public_ip }}"
+        port: 22
+        search_regex: OpenSSH
+      vars:
+        public_ip: "{{ ec2_build.instances[0].public_ip_address }}"
+
+    - name: "ami - Check for smoke test file"
+      command: |
+        ssh -o StrictHostKeyChecking=no -i /tmp/sshkey redhat@{{ public_ip }} \
+          'cat /etc/smoke-test.txt'
+      register: smoke_test_check
+      until: smoke_test_check.stdout == 'smoke-test'
+      retries: 12
+      delay: 5
+      vars:
+        public_ip: "{{ ec2_build.instances[0].public_ip_address }}"
+
+    - name: Mark test as passed if smoke-test file is correct
+      set_fact:
+        passed_tests: "{{ passed_tests + [compose.compose_type] }}"
+      when: file_check.stdout == 'smoke-test'
+
+  rescue:
+
+    - name: Mark test as failed if smoke-test file is not correct
+      set_fact:
+        failed_tests: "{{ failed_tests + [compose.compose_type] }}"
+      when: file_check.stdout != 'smoke-test'
+
+  always:
+
+    - name: Delete test instance
+      ec2_instance:
+        instance_ids:
+          - "{{ instance_id }}"
+        state: absent
+      vars:
+        instance_id: "{{ ec2_build.instances[0].instance_id }}"
+
+    - name: Delete test keypair
+      ec2_key:
+        name: "{{ compose_types.ami.image_key }}"
+        state: absent

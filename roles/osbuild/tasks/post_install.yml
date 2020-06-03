@@ -9,11 +9,21 @@
   become: yes
   when: "'composer' in group_names"
 
+- name: Enable verbose mode for osbuild-composer
+  ini_file:
+    path: /usr/lib/systemd/system/osbuild-composer.service
+    section: Service
+    option: ExecStart
+    value: "/usr/libexec/osbuild-composer/osbuild-composer -v"
+    no_extra_spaces: yes
+  become: yes
+
 - name: Stop the osbuild default worker service if it has started
   systemd:
     name: osbuild-worker@1.service
     state: stopped
     masked: yes
+    daemon-reload: yes
   ignore_errors: yes
   become: yes
 
@@ -22,6 +32,7 @@
     name: "{{ item }}"
     state: stopped
     enabled: no
+    daemon-reload: yes
   become: yes
   ignore_errors: yes
   loop:
@@ -36,6 +47,7 @@
     name: osbuild-rcm.socket
     state: started
     enabled: yes
+    daemon-reload: yes
   become: yes
   when: "'composer' in group_names"
 
@@ -53,6 +65,7 @@
     name: osbuild-remote-worker@composer:8700
     state: started
     enabled: yes
+    daemon-reload: yes
   become: yes
   when: "'workers' in group_names"
 
@@ -61,6 +74,7 @@
     name: "{{ item }}"
     state: started
     enabled: yes
+    daemon-reload: yes
   become: yes
   loop:
     - cockpit.socket

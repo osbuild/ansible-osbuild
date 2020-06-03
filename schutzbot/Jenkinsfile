@@ -10,25 +10,28 @@ pipeline {
         stage("Test") {
             parallel {
 
-                stage('Fedora 31') {
-                    agent { label "fedora31" }
-                    environment {
-                        EXTRA_VARS = "-e install_source=os"
-                    }
-                    steps {
-                        run_tests()
-                    }
-                    post {
-                        always {
-                            preserve_logs('fedora31')
-                        }
-                    }
-                }
+                // stage('Fedora 31') {
+                //     agent { label "fedora31" }
+                //     environment {
+                //         EXTRA_VARS = "-e install_source=os"
+                //     }
+                //     steps {
+                //         run_tests()
+                //     }
+                //     post {
+                //         always {
+                //             preserve_logs('fedora31')
+                //         }
+                //     }
+                // }
 
                 stage('Fedora 32') {
                     agent { label "fedora32" }
                     environment {
-                        EXTRA_VARS = "-e install_source=os"
+                        TEST_TYPE = "image"
+                        AWS_CREDS = credentials('aws-credentials-osbuildci')
+                        AWS_REGION = "us-east-2"
+                        AWS_BUCKET = "imagebuilder-jenkins-testing-use2"
                     }
                     steps {
                         run_tests()
@@ -40,20 +43,20 @@ pipeline {
                     }
                 }
 
-                stage('RHEL 8 CDN') {
-                    agent { label "rhel8" }
-                    environment {
-                        EXTRA_VARS = "-e install_source=os"
-                    }
-                    steps {
-                        run_tests()
-                    }
-                    post {
-                        always {
-                            preserve_logs('rhel8')
-                        }
-                    }
-                }
+                // stage('RHEL 8 CDN') {
+                //     agent { label "rhel8" }
+                //     environment {
+                //         EXTRA_VARS = "-e install_source=os"
+                //     }
+                //     steps {
+                //         run_tests()
+                //     }
+                //     post {
+                //         always {
+                //             preserve_logs('rhel8')
+                //         }
+                //     }
+                // }
 
             }
         }
